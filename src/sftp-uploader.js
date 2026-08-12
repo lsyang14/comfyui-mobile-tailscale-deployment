@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import SftpClient from 'ssh2-sftp-client';
 
+export function defaultSftpConfigPath(env = process.env) { return env.PICGO_CONFIG_PATH || 'D:/PicgoConfig/sftpUploaderConfig.json'; }
+
 export function resolveSftpProfile(config) {
   const profile = Object.values(config || {})[0];
   if (!profile?.host || !profile?.username || !profile?.password || !profile?.uploadPath || !profile?.path || !profile?.url) throw new Error('SFTP 图床配置不完整');
@@ -15,8 +17,7 @@ export function buildPublicUrl(profile, filename, date = new Date()) {
   return `${String(profile.url).replace(/\/$/, '')}${replaceTokens(profile.path, filename, date)}`;
 }
 
-export async function uploadWithSftp(localPath, { configPath, date = new Date() } = {}) {
-  if (!configPath) throw new Error('未设置 PICGO_CONFIG_PATH，无法读取 SFTP 图床配置');
+export async function uploadWithSftp(localPath, { configPath = defaultSftpConfigPath(), date = new Date() } = {}) {
   const profile = resolveSftpProfile(JSON.parse(await readFile(configPath, 'utf8')));
   const filename = localPath.split(/[\\/]/).pop();
   const remotePath = replaceTokens(profile.uploadPath, filename, date);

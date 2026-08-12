@@ -1,4 +1,5 @@
-import test from 'node:test'; import assert from 'node:assert/strict'; import { buildPublicUrl, resolveSftpProfile } from '../src/sftp-uploader.js';
+import test from 'node:test'; import assert from 'node:assert/strict'; import { buildPublicUrl, defaultSftpConfigPath, resolveSftpProfile } from '../src/sftp-uploader.js';
 const config={site1:{url:'http://img.example:5543',path:'/uploads/Agent/{year}/{month}/{fullName}',uploadPath:'/www/uploads/Agent/{year}/{month}/{fullName}',host:'sftp.example',port:5542,username:'u',password:'p'}};
 test('resolves the only SFTP profile without exposing its password',()=>{const profile=resolveSftpProfile(config);assert.equal(profile.host,'sftp.example');assert.equal(profile.password,'p');});
 test('builds matching remote and public paths from timestamped file names',()=>{const profile=resolveSftpProfile(config);assert.equal(buildPublicUrl(profile,'20260812153045123-a7f2.png',new Date('2026-08-12T15:30:45.123Z')),'http://img.example:5543/uploads/Agent/2026/08/20260812153045123-a7f2.png');});
+test('uses the configured local PicGo SFTP file when no environment override exists',()=>{assert.match(defaultSftpConfigPath({}),/D:[\\/]PicgoConfig[\\/]sftpUploaderConfig\.json$/);assert.equal(defaultSftpConfigPath({PICGO_CONFIG_PATH:'X:/custom.json'}),'X:/custom.json');});
