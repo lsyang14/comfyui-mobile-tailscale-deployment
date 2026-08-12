@@ -15,10 +15,16 @@ export function makeUniqueImageName(originalName, date = new Date(), suffix = ra
   return `${stamp}-${suffix}${extension}`;
 }
 
+export function extractPicgoResultUrls(result, fallbackOutput = []) {
+  const items = Array.isArray(result) ? result : fallbackOutput;
+  const urls = items.map((item) => item?.imgUrl || item?.url).filter(Boolean);
+  if (!urls.length) throw new Error('PicGo SDK 返回中没有图片 URL');
+  return urls;
+}
+
 export async function uploadWithPicgo(localPath, { configPath } = {}) {
   const picgo = new PicGo(configPath || undefined);
   const result = await picgo.upload([localPath]);
-  const urls = result?.map?.((item) => item?.imgUrl).filter(Boolean) ?? [];
-  if (!urls.length) throw new Error('PicGo SDK 返回中没有图片 URL');
-  return urls;
+  if (result instanceof Error) throw result;
+  return extractPicgoResultUrls(result, picgo.output);
 }
