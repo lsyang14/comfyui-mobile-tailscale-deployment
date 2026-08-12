@@ -1,4 +1,5 @@
-import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { PicGo } from 'picgo';
 
 export function extractPicgoUrls(output) {
   const urls = output.match(/https?:\/\/[^\s\]]+/g) ?? [];
@@ -6,18 +7,18 @@ export function extractPicgoUrls(output) {
   return urls;
 }
 
-export function uploadWithPicgo(localPath, { configPath } = {}) {
-  const args = ['picgo', 'upload', localPath];
-  if (configPath) args.push('-c', configPath);
-  return new Promise((resolve, reject) => {
-    const child = spawn('npx', ['--yes', ...args], { windowsHide: true, shell: false });
-    let stdout = ''; let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.on('error', reject);
-    child.on('close', (code) => {
-      if (code !== 0) return reject(new Error(`PicGo 上传失败 (${code}): ${stderr.trim() || stdout.trim()}`));
-      try { resolve(extractPicgoUrls(stdout)); } catch (error) { reject(error); }
-    });
-  });
+export function makeUniqueImageName(originalName, date = new Date(), suffix = randomBytes(3).toString('hex')) {
+  const safe = String(originalName).replace(/[^\w.-]/g, '_');
+  const dot = safe.lastIndexOf('.');
+  const extension = dot > 0 ? safe.slice(dot).toLowerCase() : '.png';
+  const stamp = [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0'), String(date.getHours()).padStart(2, '0'), String(date.getMinutes()).padStart(2, '0'), String(date.getSeconds()).padStart(2, '0'), String(date.getMilliseconds()).padStart(3, '0')].join('');
+  return `${stamp}-${suffix}${extension}`;
+}
+
+export async function uploadWithPicgo(localPath, { configPath } = {}) {
+  const picgo = new PicGo(configPath || undefined);
+  const result = await picgo.upload([localPath]);
+  const urls = result?.map?.((item) => item?.imgUrl).filter(Boolean) ?? [];
+  if (!urls.length) throw new Error('PicGo SDK 返回中没有图片 URL');
+  return urls;
 }

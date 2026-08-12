@@ -3,5 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node --test", "start": "node src/server.js" }
+  "scripts": { "test": "node --test", "start": "node src/server.js" },
+  "dependencies": { "picgo": "^3.0.1" }
 }

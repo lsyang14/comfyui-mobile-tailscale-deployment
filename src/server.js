@@ -1,11 +1,12 @@
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { buildWorkflow, findImageOutput } from './workflow.js';
-import { uploadWithPicgo } from './picgo.js';
+import { makeUniqueImageName, uploadWithPicgo } from './picgo.js';
 import { defaultWorkflowPath } from './paths.js';
 
 const port = Number(process.env.PORT || 3000);
@@ -44,7 +45,7 @@ async function runJob(job) {
         if (process.env.PICGO_UPLOAD !== 'false') {
           const imageResponse = await fetch(`${comfy}/view?filename=${encodeURIComponent(job.output.filename)}&subfolder=${encodeURIComponent(job.output.subfolder)}&type=${encodeURIComponent(job.output.type)}`);
           if (!imageResponse.ok) throw new Error('无法从 ComfyUI 下载生成图片');
-          const localPath = join(tmpdir(), `${job.id}-${job.output.filename.replace(/[^\w.-]/g, '_')}`);
+          const localPath = join(tmpdir(), makeUniqueImageName(job.output.filename, new Date(), randomBytes(4).toString('hex')));
           await writeFile(localPath, Buffer.from(await imageResponse.arrayBuffer()));
           try { job.imageUrl = (await uploadWithPicgo(localPath, { configPath: picgoConfigPath }))[0]; }
           finally { await unlink(localPath).catch(() => {}); }
