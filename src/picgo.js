@@ -22,9 +22,16 @@ export function extractPicgoResultUrls(result, fallbackOutput = []) {
   return urls;
 }
 
-export async function uploadWithPicgo(localPath, { configPath } = {}) {
-  const picgo = new PicGo(configPath || undefined);
-  const result = await picgo.upload([localPath]);
-  if (result instanceof Error) throw result;
-  return extractPicgoResultUrls(result, picgo.output);
+export function extractPicgoApiUrls(payload) {
+  if (!payload?.success || !Array.isArray(payload.result) || !payload.result.length) throw new Error(`PicGo 上传失败: ${payload?.message || '没有返回图片 URL'}`);
+  return payload.result.filter((url) => typeof url === 'string' && /^https?:\/\//.test(url));
+}
+
+export async function uploadWithPicgo(localPath, { serverUrl = process.env.PICGO_SERVER_URL || 'http://127.0.0.1:36677' } = {}) {
+  const response = await fetch(`${serverUrl.replace(/\/$/, '')}/upload`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ list: [localPath] })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(`PicGo API HTTP ${response.status}: ${payload.message || '上传失败'}`);
+  return extractPicgoApiUrls(payload);
 }
