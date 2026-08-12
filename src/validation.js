@@ -11,13 +11,13 @@ export function validateJobInput(input) {
   const aspectRatio = input.aspectRatio ?? '3:4 (Portrait Standard)';
   if (!ASPECT_RATIOS.has(aspectRatio)) throw new Error('不支持的 aspectRatio');
   const megapixels = input.megapixels ?? 1;
-  if (![1, 2].includes(megapixels)) throw new Error('不支持的 megapixels');
+  if (!Number.isFinite(Number(megapixels)) || Number(megapixels) < 1 || Number(megapixels) > 16) throw new Error('megapixels 必须在 1.0 到 16.0 之间');
   const seed = input.seed === undefined ? -1 : Number(input.seed);
   if (!Number.isSafeInteger(seed) || seed < -1) throw new Error('seed 必须是 -1 或安全整数');
   return {
     prompt,
     aspectRatio,
-    megapixels,
+    megapixels: Math.round(Number(megapixels) * 10) / 10,
     seed,
     refinePrompt: Boolean(input.refinePrompt),
     enableLora: Boolean(input.enableLora),

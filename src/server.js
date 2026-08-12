@@ -22,6 +22,10 @@ function json(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
+async function comfyOnline() {
+  try { const response = await fetch(`${comfy}/system_stats`, { signal: AbortSignal.timeout(2500) }); return response.ok; } catch { return false; }
+}
+
 async function body(req) {
   let data = ''; for await (const chunk of req) data += chunk;
   if (data.length > 64 * 1024) throw new Error('请求体过大');
@@ -85,6 +89,7 @@ async function runJob(job) {
 const server = http.createServer(async (req, res) => {
   try {
     if (req.url === '/health') return json(res, 200, { ok: true, service: 'comfy-mobile' });
+    if (req.method === 'GET' && req.url === '/api/comfy/status') return json(res, 200, { online: await comfyOnline(), address: comfy });
     if (authToken && req.headers.authorization !== `Bearer ${authToken}`) return json(res, 401, { error: '未授权' });
     if (req.method === 'POST' && req.url === '/api/jobs') {
       const input = await body(req);
