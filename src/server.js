@@ -30,17 +30,41 @@ async function body(req) {
 async function runJob(job) {
   try {
     job.status = 'running';
+    job.progress = { value: 0, max: 1, percent: 0, node: null, label: '连接 ComfyUI…' };
     const clientId = randomUUID();
     const built = await buildWorkflow(job.input, workflowPath);
+    const ws = new WebSocket(`${comfy.replace(/^http/, 'ws')}/ws?clientId=${clientId}`);
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('连接 ComfyUI WebSocket 超时')), 10000);
+      ws.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
+      ws.addEventListener('error', () => { clearTimeout(timer); reject(new Error('无法连接 ComfyUI WebSocket')); }, { once: true });
+    });
     const response = await fetch(`${comfy}/prompt`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: built.workflow, client_id: clientId }) });
     const queued = await response.json();
     if (!response.ok || !queued.prompt_id) throw new Error(queued.error || 'ComfyUI 拒绝了工作流');
     job.promptId = queued.prompt_id;
-    for (let i = 0; i < 1800; i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      const historyResponse = await fetch(`${comfy}/history/${queued.prompt_id}`);
-      const history = await historyResponse.json();
-      if (history[queued.prompt_id]) {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('ComfyUI 任务超过 30 分钟未完成')), 30 * 60 * 1000);
+      ws.addEventListener('message', (event) => {
+        if (typeof event.data !== 'string') return;
+        let message; try { message = JSON.parse(event.data); } catch { return; }
+        const data = message.data || {};
+        if (data.prompt_id && data.prompt_id !== queued.prompt_id) return;
+        if (message.type === 'progress') {
+          const max = Number(data.max) || 1; const value = Number(data.value) || 0;
+          job.progress = { value, max, percent: Math.min(100, Math.round(value / max * 100)), node: data.node ?? null, label: '正在生成…' };
+        } else if (message.type === 'executing') {
+          job.progress = { ...job.progress, node: data.node ?? null, label: data.node ? `正在执行节点 ${data.node}` : '整理输出…' };
+          if (data.node === null) { clearTimeout(timer); resolve(); }
+        } else if (message.type === 'execution_success') { clearTimeout(timer); resolve(); }
+        else if (message.type === 'execution_error' || message.type === 'execution_interrupted') { clearTimeout(timer); reject(new Error('ComfyUI 执行失败或被中断')); }
+      });
+      ws.addEventListener('error', () => { clearTimeout(timer); reject(new Error('ComfyUI WebSocket 连接中断')); }, { once: true });
+    });
+    ws.close();
+    const historyResponse = await fetch(`${comfy}/history/${queued.prompt_id}`);
+    const history = await historyResponse.json();
+    if (history[queued.prompt_id]) {
         job.output = findImageOutput(history[queued.prompt_id], built.options.upscale);
         if (process.env.PICGO_UPLOAD !== 'false') {
           const imageResponse = await fetch(`${comfy}/view?filename=${encodeURIComponent(job.output.filename)}&subfolder=${encodeURIComponent(job.output.subfolder)}&type=${encodeURIComponent(job.output.type)}`);
@@ -50,10 +74,10 @@ async function runJob(job) {
           try { job.imageUrl = (await uploadWithPicgo(localPath, { configPath: picgoConfigPath }))[0]; }
           finally { await unlink(localPath).catch(() => {}); }
         }
+        job.progress = { value: 1, max: 1, percent: 100, node: null, label: '上传完成' };
         job.status = 'succeeded'; return;
-      }
     }
-    throw new Error('ComfyUI 任务超过 30 分钟未完成');
+    throw new Error('ComfyUI 已结束但没有找到历史输出');
   } catch (error) { job.status = 'failed'; job.error = error.message; }
 }
 
@@ -71,7 +95,7 @@ const server = http.createServer(async (req, res) => {
     const match = req.url?.match(/^\/api\/jobs\/([^/]+)$/);
     if (req.method === 'GET' && match) {
       const job = jobs.get(match[1]); if (!job) return json(res, 404, { error: '任务不存在' });
-      return json(res, 200, { id: job.id, status: job.status, promptId: job.promptId ?? null, output: job.output ?? null, imageUrl: job.imageUrl ?? null, error: job.error ?? null });
+      return json(res, 200, { id: job.id, status: job.status, promptId: job.promptId ?? null, progress: job.progress ?? null, output: job.output ?? null, imageUrl: job.imageUrl ?? null, error: job.error ?? null });
     }
     if (req.method === 'GET' && req.url === '/') {
       const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
