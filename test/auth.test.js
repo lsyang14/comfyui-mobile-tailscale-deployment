@@ -1,2 +1,3 @@
-import test from 'node:test'; import assert from 'node:assert/strict'; import { hashPassword, verifyPassword } from '../src/auth.js';
+import test from 'node:test'; import assert from 'node:assert/strict'; import { hashPassword, roleAllowed, verifyPassword } from '../src/auth.js';
 test('hashes and verifies passwords without storing plaintext',()=>{const h=hashPassword('secret');assert.notEqual(h,'secret');assert.equal(verifyPassword('secret',h),true);assert.equal(verifyPassword('bad',h),false)});
+test('separate login entry points only allow their intended role',()=>{assert.equal(roleAllowed({role:'user'},'user'),true);assert.equal(roleAllowed({role:'user'},'admin'),false);assert.equal(roleAllowed({role:'admin'},'admin'),true);assert.equal(roleAllowed({role:'admin'},'user'),false);assert.equal(roleAllowed(null,'user'),false)});

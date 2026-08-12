@@ -4,3 +4,4 @@ export function verifyPassword(password, stored) { const [saltHex,hashHex]=store
 export function sessionToken() { return randomBytes(32).toString('hex'); }
 export function cookie(token) { return `session=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=604800${process.env.NODE_ENV==='production'?'; Secure':''}`; }
 export function getCookie(req,name='session') { const raw=req.headers.cookie||''; return raw.split(';').map(x=>x.trim()).find(x=>x.startsWith(`${name}=`))?.slice(name.length+1); }
+export function roleAllowed(user, requiredRole) { return Boolean(user && user.role === requiredRole); }

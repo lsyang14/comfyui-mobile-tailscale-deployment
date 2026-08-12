@@ -14,6 +14,7 @@ export class Database {
   deleteUser(id) { const user=this.db.prepare('SELECT role FROM users WHERE id=?').get(id); if(!user||user.role==='admin') return false; this.db.prepare('DELETE FROM sessions WHERE user_id=?').run(id); this.db.prepare('DELETE FROM gallery WHERE user_id=?').run(id); this.db.prepare('DELETE FROM users WHERE id=?').run(id); return true; }
   session(token) { return this.db.prepare('SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires_at>?').get(token, Date.now()); }
   createSession(token, userId, expiresAt) { this.db.prepare('INSERT INTO sessions VALUES (?,?,?)').run(token, userId, expiresAt); }
+  deleteSession(token) { this.db.prepare('DELETE FROM sessions WHERE token=?').run(token); }
   addGallery(item) { this.db.prepare('INSERT OR REPLACE INTO gallery VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(item.id,item.userId,item.jobId,item.imageUrl,item.prompt,item.aspectRatio,item.megapixels,item.seed,item.refinePrompt?1:0,item.enableLora?1:0,item.upscale?1:0,item.status,item.error||null,item.createdAt); }
   updateGallery(job) { this.db.prepare('UPDATE gallery SET image_url=?, status=?, error=? WHERE job_id=?').run(job.imageUrl||null,job.status,job.error||null,job.id); }
   gallery(userId) { return this.db.prepare('SELECT * FROM gallery WHERE user_id=? ORDER BY created_at DESC').all(userId); }

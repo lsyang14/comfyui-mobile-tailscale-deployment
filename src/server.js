@@ -10,7 +10,7 @@ import { makeUniqueImageName, uploadWithPicgo } from './picgo.js';
 import { defaultWorkflowPath } from './paths.js';
 import { RedisJobQueue } from './redis-queue.js';
 import { Database } from './database.js';
-import { cookie, getCookie, hashPassword, sessionToken, verifyPassword } from './auth.js';
+import { cookie, getCookie, hashPassword, roleAllowed, sessionToken, verifyPassword } from './auth.js';
 
 const port = Number(process.env.PORT || 3000);
 const comfy = process.env.COMFYUI_BASE_URL || 'http://127.0.0.1:8188';
@@ -96,7 +96,8 @@ async function runJob(job) {
 const server = http.createServer(async (req, res) => {
   try {
     if (req.url === '/health') return json(res, 200, { ok: true, service: 'comfy-mobile' });
-    if (req.method === 'POST' && req.url === '/api/auth/login') { const input=await body(req); const user=db.userByName(String(input.username||'')); if(!user||!verifyPassword(String(input.password||''),user.password_hash)) return json(res,401,{error:'用户名或密码错误'}); const token=sessionToken(); db.createSession(token,user.id,Date.now()+604800000); res.setHeader('set-cookie',cookie(token)); return json(res,200,{id:user.id,username:user.username,role:user.role}); }
+    if (req.method === 'POST' && (req.url === '/api/auth/user-login' || req.url === '/api/auth/admin-login')) { const input=await body(req); const user=db.userByName(String(input.username||'')); const requiredRole=req.url.endsWith('admin-login')?'admin':'user'; if(!user||!roleAllowed(user,requiredRole)||!verifyPassword(String(input.password||''),user.password_hash)) return json(res,401,{error:'用户名或密码错误'}); const token=sessionToken(); db.createSession(token,user.id,Date.now()+604800000); res.setHeader('set-cookie',cookie(token)); return json(res,200,{id:user.id,username:user.username,role:user.role}); }
+    if (req.method === 'POST' && req.url === '/api/auth/logout') { const token=getCookie(req); if(token) db.deleteSession(token); res.setHeader('set-cookie','session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0'); return json(res,200,{ok:true}); }
     if (req.method === 'GET' && req.url === '/api/auth/me') { const user=currentUser(req); return user ? json(res,200,{id:user.id,username:user.username,role:user.role}) : json(res,401,{error:'未登录'}); }
     if (req.method === 'POST' && req.url === '/api/admin/users') { const admin=requireUser(req,res); if(!admin)return; if(admin.role!=='admin')return json(res,403,{error:'需要管理员权限'}); const input=await body(req); if(!input.username||!input.password)return json(res,400,{error:'用户名和密码不能为空'}); if(db.userByName(input.username))return json(res,409,{error:'用户名已存在'}); const user={id:randomUUID(),username:input.username,passwordHash:hashPassword(input.password),role:'user',createdAt:new Date().toISOString()}; db.createUser(user); return json(res,201,{id:user.id,username:user.username,role:user.role}); }
     if (req.method === 'GET' && req.url === '/api/admin/users') { const admin=requireUser(req,res); if(!admin)return; if(admin.role!=='admin')return json(res,403,{error:'需要管理员权限'}); return json(res,200,{items:db.listUsers()}); }
@@ -118,8 +119,9 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { id: job.id, status: job.status, promptId: job.promptId ?? null, queuePosition: job.status === 'queued' ? await queue.position(job.id) : 0, progress: job.progress ?? null, output: job.output ?? null, imageUrl: job.imageUrl ?? null, error: job.error ?? null });
     }
     if (req.method === 'GET' && req.url === '/api/gallery') { const user=requireUser(req,res); if(!user)return; return json(res,200,{items:db.gallery(user.id)}); }
-    if (req.method === 'GET' && req.url === '/') {
-      const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+    if (req.method === 'GET' && ['/', '/admin', '/gallery', '/account'].includes(req.url)) {
+      const fileName = req.url === '/' ? 'index.html' : `${req.url.slice(1)}.html`;
+      const html = await readFile(new URL(`../public/${fileName}`, import.meta.url), 'utf8');
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(html); return;
     }
     json(res, 404, { error: 'Not found' });
