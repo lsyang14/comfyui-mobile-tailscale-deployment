@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { buildWorkflow, findImageOutput } from './workflow.js';
 import { makeUniqueImageName, uploadWithPicgo } from './picgo.js';
 import { defaultWorkflowPath } from './paths.js';
+import { JobQueue } from './queue.js';
 
 const port = Number(process.env.PORT || 3000);
 const comfy = process.env.COMFYUI_BASE_URL || 'http://127.0.0.1:8188';
@@ -15,6 +16,7 @@ const workflowPath = process.env.WORKFLOW_PATH || defaultWorkflowPath(import.met
 const authToken = process.env.AUTH_TOKEN || '';
 const picgoConfigPath = process.env.PICGO_CONFIG_PATH || '';
 const jobs = new Map();
+const queue = new JobQueue({ maxSize: Number(process.env.MAX_QUEUE_SIZE || 10) });
 
 function json(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -89,13 +91,15 @@ const server = http.createServer(async (req, res) => {
       const input = await body(req);
       const id = randomUUID();
       const job = { id, input, status: 'queued', createdAt: new Date().toISOString() };
-      jobs.set(id, job); void runJob(job);
-      return json(res, 202, { jobId: id, status: job.status });
+      jobs.set(id, job);
+      try { queue.add(id, () => runJob(job)); } catch (error) { jobs.delete(id); return json(res, 429, { error: error.message }); }
+      job.queuePosition = queue.position(id);
+      return json(res, 202, { jobId: id, status: job.status, queuePosition: job.queuePosition });
     }
     const match = req.url?.match(/^\/api\/jobs\/([^/]+)$/);
     if (req.method === 'GET' && match) {
       const job = jobs.get(match[1]); if (!job) return json(res, 404, { error: '任务不存在' });
-      return json(res, 200, { id: job.id, status: job.status, promptId: job.promptId ?? null, progress: job.progress ?? null, output: job.output ?? null, imageUrl: job.imageUrl ?? null, error: job.error ?? null });
+      return json(res, 200, { id: job.id, status: job.status, promptId: job.promptId ?? null, queuePosition: job.status === 'queued' ? queue.position(job.id) : 0, progress: job.progress ?? null, output: job.output ?? null, imageUrl: job.imageUrl ?? null, error: job.error ?? null });
     }
     if (req.method === 'GET' && req.url === '/') {
       const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
