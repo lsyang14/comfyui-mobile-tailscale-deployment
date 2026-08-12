@@ -1,6 +1,7 @@
 export const ASPECT_RATIOS = new Set([
-  '1:1', '3:4', '4:3', '9:16', '16:9',
-  '3:4 (Portrait Standard)'
+  '1:1', '1:1 (Square)', '2:3 (Portrait Photo)', '3:2 (Photo)',
+  '3:4', '3:4 (Portrait Standard)', '4:3', '4:3 (Standard)',
+  '9:16', '9:16 (Portrait Widescreen)', '16:9', '16:9 (Widescreen)'
 ]);
 
 export function validateJobInput(input) {
