@@ -5,14 +5,14 @@ import { writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { buildWorkflow, findImageOutput } from './workflow.js';
-import { loadPicgoConfig, uploadWithCurl } from './uploader.js';
+import { uploadWithPicgo } from './picgo.js';
 import { defaultWorkflowPath } from './paths.js';
 
 const port = Number(process.env.PORT || 3000);
 const comfy = process.env.COMFYUI_BASE_URL || 'http://127.0.0.1:8188';
 const workflowPath = process.env.WORKFLOW_PATH || defaultWorkflowPath(import.meta.url);
 const authToken = process.env.AUTH_TOKEN || '';
-const picgoPath = process.env.PICGO_SFTP_CONFIG || '';
+const picgoConfigPath = process.env.PICGO_CONFIG_PATH || '';
 const jobs = new Map();
 
 function json(res, status, body) {
@@ -41,12 +41,12 @@ async function runJob(job) {
       const history = await historyResponse.json();
       if (history[queued.prompt_id]) {
         job.output = findImageOutput(history[queued.prompt_id], built.options.upscale);
-        if (picgoPath) {
+        if (process.env.PICGO_UPLOAD !== 'false') {
           const imageResponse = await fetch(`${comfy}/view?filename=${encodeURIComponent(job.output.filename)}&subfolder=${encodeURIComponent(job.output.subfolder)}&type=${encodeURIComponent(job.output.type)}`);
           if (!imageResponse.ok) throw new Error('无法从 ComfyUI 下载生成图片');
           const localPath = join(tmpdir(), `${job.id}-${job.output.filename.replace(/[^\w.-]/g, '_')}`);
           await writeFile(localPath, Buffer.from(await imageResponse.arrayBuffer()));
-          try { job.imageUrl = await uploadWithCurl(await loadPicgoConfig(picgoPath), localPath, job.output.filename); }
+          try { job.imageUrl = (await uploadWithPicgo(localPath, { configPath: picgoConfigPath }))[0]; }
           finally { await unlink(localPath).catch(() => {}); }
         }
         job.status = 'succeeded'; return;
