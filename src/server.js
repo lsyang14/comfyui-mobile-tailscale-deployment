@@ -6,7 +6,8 @@ import { writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { buildWorkflow, findImageOutput } from './workflow.js';
-import { makeUniqueImageName, uploadWithPicgo } from './picgo.js';
+import { makeUniqueImageName } from './picgo.js';
+import { uploadWithSftp } from './sftp-uploader.js';
 import { defaultWorkflowPath } from './paths.js';
 import { RedisJobQueue } from './redis-queue.js';
 import { Database } from './database.js';
@@ -83,7 +84,7 @@ async function runJob(job) {
           if (!imageResponse.ok) throw new Error('无法从 ComfyUI 下载生成图片');
           const localPath = join(tmpdir(), makeUniqueImageName(job.output.filename, new Date(), randomBytes(4).toString('hex')));
           await writeFile(localPath, Buffer.from(await imageResponse.arrayBuffer()));
-          try { job.imageUrl = (await uploadWithPicgo(localPath, { configPath: picgoConfigPath }))[0]; }
+          try { job.imageUrl = await uploadWithSftp(localPath, { configPath: picgoConfigPath }); }
           finally { await unlink(localPath).catch(() => {}); }
         }
         job.progress = { value: 1, max: 1, percent: 100, node: null, label: '上传完成' };

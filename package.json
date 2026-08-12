@@ -3,6 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node --test", "start": "node src/server.js" },
-  "dependencies": { "picgo": "^3.0.1", "redis": "^5.10.0" }
+  "scripts": {
+    "test": "node --test",
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "picgo": "^3.0.1",
+    "redis": "^5.10.0",
+    "ssh2-sftp-client": "^12.1.1"
+  }
 }
