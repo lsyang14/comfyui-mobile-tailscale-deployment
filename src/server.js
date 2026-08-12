@@ -6,10 +6,11 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { buildWorkflow, findImageOutput } from './workflow.js';
 import { loadPicgoConfig, uploadWithCurl } from './uploader.js';
+import { defaultWorkflowPath } from './paths.js';
 
 const port = Number(process.env.PORT || 3000);
 const comfy = process.env.COMFYUI_BASE_URL || 'http://127.0.0.1:8188';
-const workflowPath = process.env.WORKFLOW_PATH || new URL('../workflow-krea2.json', import.meta.url).pathname;
+const workflowPath = process.env.WORKFLOW_PATH || defaultWorkflowPath(import.meta.url);
 const authToken = process.env.AUTH_TOKEN || '';
 const picgoPath = process.env.PICGO_SFTP_CONFIG || '';
 const jobs = new Map();
