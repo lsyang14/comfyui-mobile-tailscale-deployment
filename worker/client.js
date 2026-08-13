@@ -38,7 +38,7 @@ async function executeJob(socket, job) {
 let retry = 1000;
 async function connect() {
   const socket = new WebSocket(workerWsUrl(serverUrl, token), { headers: { authorization: `Bearer ${token}` } });
-  socket.on('open', () => { retry = 1000; console.log(`[worker ${workerId}] WSS connected to ${serverUrl}`); socket.send(workerMessage('hello', { workerId, capabilities: { comfyOnline: false, clientVersion: '1.0.0' } })); });
+  socket.on('open', async () => { retry = 1000; console.log(`[worker ${workerId}] WSS connected to ${serverUrl}`); socket.send(workerMessage('hello', { workerId, capabilities: { comfyOnline: await comfyOnline(), clientVersion: '1.0.0' } })); });
   socket.on('message', async (raw) => { let message; try { message = JSON.parse(raw.toString()); } catch { return; } if (message.type === 'job') await executeJob(socket, message); });
   const heartbeat = setInterval(async () => { if (socket.readyState === WebSocket.OPEN) socket.send(workerMessage('heartbeat', { status: await comfyOnline() ? 'idle' : 'unavailable', capabilities: { comfyOnline: await comfyOnline(), clientVersion: '1.0.0' } })); }, 15000);
   socket.on('close', () => { clearInterval(heartbeat); console.log(`[worker ${workerId}] WSS disconnected; retrying in ${retry}ms`); setTimeout(connect, retry); retry = Math.min(retry * 2, 30000); }); socket.on('error', (error) => console.error(`[worker ${workerId}] WSS error: ${error.message}`));

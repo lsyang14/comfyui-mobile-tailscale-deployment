@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { workerWsUrl, parseWorkerMessage, workerMessage } from '../src/worker-client.js';
+import { readFile } from 'node:fs/promises';
 
 test('worker client builds a WSS endpoint from the public server URL', () => {
   assert.equal(workerWsUrl('https://ai.example.com', 'secret'), 'wss://ai.example.com/api/worker/ws');
@@ -15,4 +16,9 @@ test('worker protocol rejects malformed messages and normalizes valid messages',
 
 test('worker messages are JSON envelopes', () => {
   assert.equal(workerMessage('progress', { jobId: 'j1', percent: 50 }), JSON.stringify({ type: 'progress', jobId: 'j1', percent: 50 }));
+});
+
+test('worker handshake does not advertise ComfyUI as hard-coded offline', async () => {
+  const source = await readFile(new URL('../worker/client.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /comfyOnline:\s*false/);
 });
