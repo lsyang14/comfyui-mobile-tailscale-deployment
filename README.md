@@ -1,6 +1,6 @@
-# ComfyUI mobile Tailscale deployment
+# ComfyUI mobile — Synology Web + Windows GPU Worker Client
 
-This repository contains the first runnable backend core for the local ComfyUI mobile service described in [the deployment guide](../docs/comfyui-mobile-tailscale-deployment-guide.md).
+The production architecture is a Synology-hosted web service plus a replaceable Windows GPU Worker Client. The Windows client makes an outbound WSS connection to Synology and calls only local ComfyUI (`127.0.0.1:8188`); Windows needs no public IP or inbound port.
 
 ## Current milestone (v0.1.0)
 
@@ -25,4 +25,8 @@ The intended remote is:
 https://github.com/lsyang14/comfyui-mobile-tailscale-deployment.git
 ```
 
-See `docs/comfyui-mobile-tailscale-deployment-guide.md` in the parent workspace for the full Windows, Tailscale, Synology reverse-proxy, and production checklist.
+See [docs/synology-docker-deployment.md](docs/synology-docker-deployment.md) for Docker deployment and Windows Client setup. Start the Client with:
+
+```powershell
+./worker/start-client.ps1 -ServerUrl 'https://your-domain.example' -Token 'your-worker-token' -WorkerId 'GPU-01'
+```

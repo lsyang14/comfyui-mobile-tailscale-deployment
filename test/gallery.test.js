@@ -1,2 +1,4 @@
 import test from 'node:test'; import assert from 'node:assert/strict'; import { readFile } from 'node:fs/promises';
 test('gallery preview provides a clear return-to-gallery control',async()=>{const html=await readFile(new URL('../public/gallery.html',import.meta.url),'utf8');assert.match(html,/返回图库/);assert.match(html,/Escape/)});
+test('gallery uses the same-origin image proxy instead of embedding the SFTP URL',async()=>{const html=await readFile(new URL('../public/gallery.html',import.meta.url),'utf8');assert.match(html,/\/api\/images\//)});
+test('gallery renders image URLs through DOM APIs without HTML interpolation',async()=>{const html=await readFile(new URL('../public/gallery.html',import.meta.url),'utf8');assert.match(html,/x\.image_url/);assert.match(html,/createElement\('img'\)/);assert.doesNotMatch(html,/innerHTML/);assert.doesNotMatch(html,/onclick=/)});

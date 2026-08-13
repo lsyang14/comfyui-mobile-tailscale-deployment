@@ -12,22 +12,30 @@ import { defaultWorkflowPath } from './paths.js';
 import { RedisJobQueue } from './redis-queue.js';
 import { Database } from './database.js';
 import { cookie, getCookie, hashPassword, roleAllowed, sessionToken, verifyPassword } from './auth.js';
+import { publicError, securityHeaders, isAllowedOrigin, isSafeImageUrl, rateLimit } from './security.js';
+import { WorkerBroker } from './worker-broker.js';
 
 const port = Number(process.env.PORT || 3000);
 const comfy = process.env.COMFYUI_BASE_URL || 'http://127.0.0.1:8188';
 const workflowPath = process.env.WORKFLOW_PATH || defaultWorkflowPath(import.meta.url);
+const workflowHd4kPath = process.env.WORKFLOW_HD4K_PATH || new URL('../workflow-krea2-hd4k.json', import.meta.url);
 const authToken = process.env.AUTH_TOKEN || '';
-const picgoConfigPath = defaultSftpConfigPath();
+  const picgoConfigPath = defaultSftpConfigPath();
+  const imageHostAllowlist = (process.env.IMAGE_HOST_ALLOWLIST || '').split(',').map((host) => host.trim().toLowerCase()).filter(Boolean);
+const workerBroker = new WorkerBroker();
 const queue = new RedisJobQueue({ maxSize: Number(process.env.MAX_QUEUE_SIZE || 10) });
 const db = new Database();
+const loginLimit = rateLimit({ limit: 8, windowMs: 15 * 60 * 1000 });
+const jobLimit = rateLimit({ limit: 30, windowMs: 60 * 1000 });
 if (process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD && !db.userByName(process.env.ADMIN_USERNAME)) db.createUser({ id: randomUUID(), username: process.env.ADMIN_USERNAME, passwordHash: hashPassword(process.env.ADMIN_PASSWORD), role: 'admin', createdAt: new Date().toISOString() });
 
 function json(res, status, body) {
-  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+  res.writeHead(status, { ...securityHeaders(), 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
   res.end(JSON.stringify(body));
 }
 
 async function comfyOnline() {
+  if (process.env.WORKER_TOKEN || process.env.WORKER_PAIRING_TOKEN) return workerBroker.onlineWorkers().some((worker) => worker.capabilities?.comfyOnline !== false);
   try { const response = await fetch(`${comfy}/system_stats`, { signal: AbortSignal.timeout(2500) }); return response.ok; } catch { return false; }
 }
 
@@ -39,13 +47,15 @@ async function body(req) {
 
 function currentUser(req) { const token = getCookie(req); return token ? db.session(token) : null; }
 function requireUser(req, res) { const user = currentUser(req); if (!user) { json(res, 401, { error: '请先登录' }); return null; } return user; }
+function stateChangeAllowed(req) { if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return true; const origin = req.headers.origin; const appOrigin = process.env.APP_ORIGIN; return !appOrigin || isAllowedOrigin(origin, appOrigin); }
 
 async function runJob(job) {
   try {
+    if (process.env.WORKER_TOKEN || process.env.WORKER_PAIRING_TOKEN) return await runWorkerJob(job);
     job.status = 'running'; await queue.save(job); db.updateGallery(job);
     job.progress = { value: 0, max: 1, percent: 0, node: null, label: '连接 ComfyUI…' }; await queue.save(job);
     const clientId = randomUUID();
-    const built = await buildWorkflow(job.input, workflowPath);
+    const built = await buildWorkflow(job.input, job.input.workflow === 'krea2-hd4k' ? workflowHd4kPath : workflowPath);
     const ws = new WebSocket(`${comfy.replace(/^http/, 'ws')}/ws?clientId=${clientId}`);
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('连接 ComfyUI WebSocket 超时')), 10000);
@@ -94,20 +104,36 @@ async function runJob(job) {
   } catch (error) { job.status = 'failed'; job.error = error.message; db.updateGallery(job); }
 }
 
+async function runWorkerJob(job) {
+  try {
+    job.status = 'running'; job.progress = { value: 0, max: 1, percent: 0, node: null, label: '等待 GPU Worker…' }; await queue.save(job); db.updateGallery(job);
+    const result = await workerBroker.run(job, { onProgress: (message) => { job.progress = { value: Number(message.value) || 0, max: Number(message.max) || 1, percent: Math.min(100, Number(message.percent) || 0), node: message.node ?? null, label: message.label || '正在生成…' }; void queue.save(job); } });
+    if (!result.imageBase64) throw new Error('GPU Worker 未返回图片');
+    const filename = result.filename || `${job.id}.png`;
+    const localPath = join(tmpdir(), makeUniqueImageName(filename, new Date(), randomBytes(4).toString('hex')));
+    await writeFile(localPath, Buffer.from(result.imageBase64, 'base64'));
+    try { if (process.env.PICGO_UPLOAD !== 'false') job.imageUrl = await uploadWithSftp(localPath, { configPath: picgoConfigPath }); }
+    finally { await unlink(localPath).catch(() => {}); }
+    job.output = { filename, subfolder: '', type: 'output' }; job.progress = { value: 1, max: 1, percent: 100, label: '上传完成' }; job.status = 'succeeded'; db.updateGallery(job);
+  } catch (error) { job.status = 'failed'; job.error = error.message; db.updateGallery(job); }
+}
+
 const server = http.createServer(async (req, res) => {
   try {
-    if (req.url === '/health') return json(res, 200, { ok: true, service: 'comfy-mobile' });
-    if (req.method === 'POST' && (req.url === '/api/auth/user-login' || req.url === '/api/auth/admin-login')) { const input=await body(req); const user=db.userByName(String(input.username||'')); const requiredRole=req.url.endsWith('admin-login')?'admin':'user'; if(!user||!roleAllowed(user,requiredRole)||!verifyPassword(String(input.password||''),user.password_hash)) return json(res,401,{error:'用户名或密码错误'}); const token=sessionToken(); db.createSession(token,user.id,Date.now()+604800000); res.setHeader('set-cookie',cookie(token)); return json(res,200,{id:user.id,username:user.username,role:user.role}); }
-    if (req.method === 'POST' && req.url === '/api/auth/logout') { const token=getCookie(req); if(token) db.deleteSession(token); res.setHeader('set-cookie','session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0'); return json(res,200,{ok:true}); }
+    if (req.url === '/health') return json(res, 200, { ok: true, service: 'comfy-mobile', workers: workerBroker.onlineWorkers().map((worker) => ({ id: worker.id, idle: worker.idle, lastSeenAt: worker.lastSeenAt })) });
+    if (!stateChangeAllowed(req)) return json(res, 403, { error: '来源校验失败' });
+    if (req.method === 'POST' && (req.url === '/api/auth/user-login' || req.url === '/api/auth/admin-login')) { const input=await body(req); const key=`${req.socket.remoteAddress}:${String(input.username||'').toLowerCase()}`; if(!loginLimit(key)) return json(res,429,{error:'登录尝试过于频繁'}); const user=db.userByName(String(input.username||'')); const requiredRole=req.url.endsWith('admin-login')?'admin':'user'; if(!user||!roleAllowed(user,requiredRole)||!verifyPassword(String(input.password||''),user.password_hash)) return json(res,401,{error:'用户名或密码错误'}); const token=sessionToken(); db.createSession(token,user.id,Date.now()+604800000); res.setHeader('set-cookie',cookie(token)); return json(res,200,{id:user.id,username:user.username,role:user.role}); }
+    if (req.method === 'POST' && req.url === '/api/auth/logout') { const token=getCookie(req); if(token) db.deleteSession(token); res.setHeader('set-cookie','session=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0'); return json(res,200,{ok:true}); }
     if (req.method === 'GET' && req.url === '/api/auth/me') { const user=currentUser(req); return user ? json(res,200,{id:user.id,username:user.username,role:user.role}) : json(res,401,{error:'未登录'}); }
     if (req.method === 'POST' && req.url === '/api/admin/users') { const admin=requireUser(req,res); if(!admin)return; if(admin.role!=='admin')return json(res,403,{error:'需要管理员权限'}); const input=await body(req); if(!input.username||!input.password)return json(res,400,{error:'用户名和密码不能为空'}); if(db.userByName(input.username))return json(res,409,{error:'用户名已存在'}); const user={id:randomUUID(),username:input.username,passwordHash:hashPassword(input.password),role:'user',createdAt:new Date().toISOString()}; db.createUser(user); return json(res,201,{id:user.id,username:user.username,role:user.role}); }
     if (req.method === 'GET' && req.url === '/api/admin/users') { const admin=requireUser(req,res); if(!admin)return; if(admin.role!=='admin')return json(res,403,{error:'需要管理员权限'}); return json(res,200,{items:db.listUsers()}); }
     const resetMatch=req.url?.match(/^\/api\/admin\/users\/([^/]+)\/password$/); if(req.method==='POST'&&resetMatch){const admin=requireUser(req,res);if(!admin)return;if(admin.role!=='admin')return json(res,403,{error:'需要管理员权限'});const input=await body(req);if(!input.password)return json(res,400,{error:'密码不能为空'});if(!db.userByName(input.username||'')&&!db.db.prepare('SELECT id FROM users WHERE id=?').get(resetMatch[1]))return json(res,404,{error:'用户不存在'});db.updatePassword(resetMatch[1],hashPassword(input.password));return json(res,200,{ok:true});}
     const deleteMatch=req.url?.match(/^\/api\/admin\/users\/([^/]+)$/); if(req.method==='DELETE'&&deleteMatch){const admin=requireUser(req,res);if(!admin)return;if(admin.role!=='admin')return json(res,403,{error:'需要管理员权限'});if(deleteMatch[1]===admin.id)return json(res,400,{error:'不能删除当前管理员'});return db.deleteUser(deleteMatch[1])?json(res,200,{ok:true}):json(res,404,{error:'用户不存在或不可删除'});}
-    if (req.method === 'GET' && req.url === '/api/comfy/status') return json(res, 200, { online: await comfyOnline(), address: comfy });
+    if (req.method === 'GET' && req.url === '/api/comfy/status') return json(res, 200, { online: await comfyOnline() });
     if (authToken && req.headers.authorization !== `Bearer ${authToken}`) return json(res, 401, { error: '未授权' });
     if (req.method === 'POST' && req.url === '/api/jobs') {
       const user=requireUser(req,res); if(!user)return;
+      if (!jobLimit(user.id)) return json(res, 429, { error: '提交过于频繁' });
       const input = await body(req);
       const id = randomUUID();
       const job = { id, userId:user.id, input, status: 'queued', createdAt: new Date().toISOString() };
@@ -119,15 +145,29 @@ const server = http.createServer(async (req, res) => {
       const user=requireUser(req,res); if(!user)return; const job = await queue.get(match[1]); if (!job || job.userId!==user.id) return json(res, 404, { error: '任务不存在' });
       return json(res, 200, { id: job.id, status: job.status, promptId: job.promptId ?? null, queuePosition: job.status === 'queued' ? await queue.position(job.id) : 0, progress: job.progress ?? null, output: job.output ?? null, imageUrl: job.imageUrl ?? null, error: job.error ?? null });
     }
+    const imageMatch = req.url?.match(/^\/api\/images\/([^/]+)$/);
+    if (req.method === 'GET' && imageMatch) {
+      const user = requireUser(req, res); if (!user) return;
+      const item = db.galleryItem(user.id, decodeURIComponent(imageMatch[1]));
+        if (!item?.image_url || !isSafeImageUrl(item.image_url, imageHostAllowlist)) return json(res, 404, { error: '图片不存在' });
+        const upstream = await fetch(item.image_url, { redirect: 'error', signal: AbortSignal.timeout(15000) });
+        if (!upstream.ok) return json(res, 502, { error: '图片源暂时不可用' });
+        const contentType = upstream.headers.get('content-type') || '';
+        if (!contentType.toLowerCase().startsWith('image/')) return json(res, 502, { error: '图片源返回类型无效' });
+        res.writeHead(200, { ...securityHeaders(), 'content-type': contentType, 'cache-control': 'private, max-age=300' });
+      return res.end(Buffer.from(await upstream.arrayBuffer()));
+    }
     if (req.method === 'GET' && req.url === '/api/gallery') { const user=requireUser(req,res); if(!user)return; return json(res,200,{items:db.gallery(user.id)}); }
     if (req.method === 'GET' && ['/', '/admin', '/gallery', '/account'].includes(req.url)) {
       const fileName = req.url === '/' ? 'index.html' : `${req.url.slice(1)}.html`;
       const html = await readFile(new URL(`../public/${fileName}`, import.meta.url), 'utf8');
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(html); return;
+      res.writeHead(200, { ...securityHeaders(), 'content-type': 'text/html; charset=utf-8' }); res.end(html); return;
     }
     json(res, 404, { error: 'Not found' });
-  } catch (error) { json(res, 400, { error: error.message }); }
+  } catch (error) { console.error('[request-error]', error); json(res, 400, publicError(error)); }
 });
+
+workerBroker.attach(server);
 
 await queue.connect();
 void queue.startWorker(runJob);

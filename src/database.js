@@ -18,4 +18,5 @@ export class Database {
   addGallery(item) { this.db.prepare('INSERT OR REPLACE INTO gallery VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(item.id,item.userId,item.jobId,item.imageUrl,item.prompt,item.aspectRatio,item.megapixels,item.seed,item.refinePrompt?1:0,item.enableLora?1:0,item.upscale?1:0,item.status,item.error||null,item.createdAt); }
   updateGallery(job) { this.db.prepare('UPDATE gallery SET image_url=?, status=?, error=? WHERE job_id=?').run(job.imageUrl||null,job.status,job.error||null,job.id); }
   gallery(userId) { return this.db.prepare('SELECT * FROM gallery WHERE user_id=? ORDER BY created_at DESC').all(userId); }
+  galleryItem(userId, jobId) { return this.db.prepare('SELECT * FROM gallery WHERE user_id=? AND job_id=?').get(userId, jobId); }
 }

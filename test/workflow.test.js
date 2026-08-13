@@ -22,3 +22,22 @@ test('maps only allow-listed values into the API workflow', async () => {
 test('prefers the requested SaveImage node output', () => {
   assert.deepEqual(findImageOutput({ outputs: { '167': { images: [{ filename: 'main.png' }] } } }, true), { filename: 'main.png', subfolder: '', type: 'output' });
 });
+
+test('maps HD4K controls without changing the default megapixels or skin model', async () => {
+  const path = join(tmpdir(), `hd4k-${Date.now()}.json`);
+  await writeFile(path, JSON.stringify({
+    '627': { inputs: { text: 'old' } }, '848': { inputs: { aspect_ratio: 'old', megapixels: 1.5 } },
+    '649': { inputs: { seed: 1 } }, '711': { inputs: { blend_factor: 0.2, blend_mode: 'normal' } },
+    '713': { inputs: { resolution: 4096, max_resolution: 4096 } }, '702': { inputs: { model_name: 'default.pth' } }
+  }));
+  const { workflow } = await buildWorkflow({ workflow: 'krea2-hd4k', prompt: 'new', aspectRatio: '16:9 (Widescreen)', seed: 99, skinContrast: true, skinContrastStrength: 0.7, skinContrastMode: 'overlay', seedvrResolution: 6144 }, path);
+  assert.equal(workflow['627'].inputs.text, 'new');
+  assert.equal(workflow['848'].inputs.aspect_ratio, '16:9 (Widescreen)');
+  assert.equal(workflow['848'].inputs.megapixels, 1.5);
+  assert.equal(workflow['649'].inputs.seed, 99);
+  assert.equal(workflow['711'].inputs.blend_factor, 0.7);
+  assert.equal(workflow['711'].inputs.blend_mode, 'overlay');
+  assert.equal(workflow['713'].inputs.resolution, 6144);
+  assert.equal(workflow['713'].inputs.max_resolution, 6144);
+  assert.equal(workflow['702'].inputs.model_name, 'default.pth');
+});

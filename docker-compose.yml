@@ -1,0 +1,29 @@
+services:
+  redis:
+    # DaoCloud Docker 国内镜像
+    image: m.daocloud.io/docker.io/library/redis:7-alpine
+    command: ["redis-server","--appendonly","yes"]
+    volumes: ["redis-data:/data"]
+    restart: unless-stopped
+  web:
+    build: .
+    depends_on: [redis]
+    ports: ["3000:3000"]
+    environment:
+      PORT: 3000
+      REDIS_URL: redis://redis:6379
+      DATABASE_PATH: /data/comfy-mobile.sqlite
+      WORKER_PAIRING_TOKEN: ${WORKER_PAIRING_TOKEN}
+      ADMIN_USERNAME: ${ADMIN_USERNAME}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      APP_ORIGIN: ${APP_ORIGIN}
+      IMAGE_HOST_ALLOWLIST: ${IMAGE_HOST_ALLOWLIST}
+      PICGO_CONFIG_PATH: /run/secrets/sftp_config.json
+    volumes:
+      - "web-data:/data"
+      # 使用只读绑定挂载，兼容 Docker Desktop、WSL 和群晖 Container Manager
+      - "./secrets/sftpUploaderConfig.json:/run/secrets/sftp_config.json:ro"
+    restart: unless-stopped
+volumes:
+  redis-data:
+  web-data:
